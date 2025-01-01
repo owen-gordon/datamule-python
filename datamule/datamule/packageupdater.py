@@ -4,6 +4,7 @@ import json
 import csv
 import os
 from pkg_resources import resource_filename
+from tqdm import tqdm
 from .helper import headers
 from .downloader import PreciseRateLimiter, RateMonitor
 
@@ -12,18 +13,30 @@ class PackageUpdater:
         self.limiter = PreciseRateLimiter(5)  # 5 requests per second
         self.rate_monitor = RateMonitor()
         self.headers = headers
+        self.timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
+        self.max_retries = 3
     
-    async def _fetch_json(self, session, url):
+    async def _fetch_json(self, session, url, retry_count=0):
         """Fetch JSON with rate limiting and monitoring."""
         async with self.limiter:
             try:
-                async with session.get(url) as response:
+                tqdm.write(f"Fetching {url}")
+                async with session.get(url, timeout=self.timeout) as response:
                     response.raise_for_status()
+                    tqdm.write(f"Reading content from {url}")
                     content = await response.read()
                     await self.rate_monitor.add_request(len(content))
+                    tqdm.write(f"Parsing JSON from {url}")
                     return await response.json()
+            except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+                if retry_count < self.max_retries:
+                    tqdm.write(f"Retry {retry_count + 1} for {url} after error: {str(e)}")
+                    await asyncio.sleep(1 * (retry_count + 1))  # Exponential backoff
+                    return await self._fetch_json(session, url, retry_count + 1)
+                tqdm.write(f"Failed after {self.max_retries} retries for {url}: {str(e)}")
+                return None
             except Exception as e:
-                print(f"Error fetching {url}: {str(e)}")
+                tqdm.write(f"Error fetching {url}: {str(e)}")
                 return None
 
     async def _update_company_tickers(self):
@@ -95,24 +108,45 @@ class PackageUpdater:
             'business_zipCode', 'business_stateOrCountryDescription'
         ]
 
+        tqdm.write(f"\nProcessing batch with CIKs: {[company['cik'] for company in companies]}")
         tasks = []
         for company in companies:
             cik = company['cik']
             url = f'https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json'
             tasks.append(self._fetch_json(session, url))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            tqdm.write("Waiting for batch requests to complete...")
+            # Add timeout for the entire batch
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=120  # 2 minute timeout for entire batch
+            )
+            tqdm.write("Batch requests completed")
+        except asyncio.TimeoutError:
+            tqdm.write("Batch timeout occurred, processing partial results")
+            # Get whatever results we have
+            results = [None] * len(tasks)
+        except Exception as e:
+            tqdm.write(f"Error in gather: {str(e)}")
+            return
 
+        tqdm.write("Processing batch results...")
         for company, result in zip(companies, results):
             if isinstance(result, Exception) or not result:
-                print(f"Error processing CIK {company['cik']}: {str(result) if isinstance(result, Exception) else 'No data'}")
+                tqdm.write(f"Error processing CIK {company['cik']}: {str(result) if isinstance(result, Exception) else 'No data'}")
+                # Write empty row but preserve CIK
+                empty_row = {field: '' for field in metadata_fields}
+                empty_row['cik'] = company['cik']
+                metadata_writer.writerow(empty_row)
                 continue
 
             try:
+                tqdm.write(f"Processing metadata for CIK {company['cik']}")
                 metadata = {field: result.get(field, '') for field in metadata_fields if field not in ['tickers', 'exchanges']}
                 metadata['cik'] = company['cik']
-                metadata['tickers'] = ','.join(result.get('tickers', []))
-                metadata['exchanges'] = ','.join(result.get('exchanges', []))
+                metadata['tickers'] = ','.join(result.get('tickers', []) or [])
+                metadata['exchanges'] = ','.join(result.get('exchanges', []) or [])
 
                 # Add address information
                 for address_type in ['mailing', 'business']:
@@ -123,15 +157,21 @@ class PackageUpdater:
                 metadata_writer.writerow(metadata)
 
                 for former_name in result.get('formerNames', []):
-                    former_names_writer.writerow({
-                        'cik': company['cik'],
-                        'former_name': former_name['name'],
-                        'from_date': former_name['from'],
-                        'to_date': former_name['to']
-                    })
+                    if former_name.get('name'):  # Only process if name exists
+                        former_names_writer.writerow({
+                            'cik': company['cik'],
+                            'former_name': former_name['name'],
+                            'from_date': former_name.get('from', ''),
+                            'to_date': former_name.get('to', '')
+                        })
+                tqdm.write(f"Completed processing CIK {company['cik']}")
 
             except Exception as e:
-                print(f"Error processing metadata for CIK {company['cik']}: {str(e)}")
+                tqdm.write(f"Error processing metadata for CIK {company['cik']}: {str(e)}")
+                # Write empty row but preserve CIK
+                empty_row = {field: '' for field in metadata_fields}
+                empty_row['cik'] = company['cik']
+                metadata_writer.writerow(empty_row)
 
     async def _update_company_metadata(self):
         """Update company metadata and former names files."""
@@ -167,13 +207,19 @@ class PackageUpdater:
                     former_names_writer = csv.DictWriter(fnf, fieldnames=former_names_fields)
                     former_names_writer.writeheader()
 
-                    # Process in batches of 10 companies
+                    # Process in batches of 10 companies with progress bar
                     batch_size = 10
-                    for i in range(0, len(company_tickers), batch_size):
+                    total_companies = len(company_tickers)
+                    progress_bar = tqdm(total=total_companies, desc="Processing CIKs")
+                    
+                    for i in range(0, total_companies, batch_size):
                         batch = company_tickers[i:i + batch_size]
                         await self._process_metadata_batch(
                             session, batch, metadata_writer, former_names_writer
                         )
+                        progress_bar.update(len(batch))
+                    
+                    progress_bar.close()
 
             # Replace original files
             for src, dst in [(temp_metadata_file, metadata_file), 
