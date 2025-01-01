@@ -7,7 +7,7 @@ import logging
 from pkg_resources import resource_filename
 from tqdm import tqdm
 from .helper import headers
-from .downloader import PreciseRateLimiter, RateMonitor
+from .downloader.downloader import PreciseRateLimiter, RateMonitor
 
 # Set up logging based on environment variable
 log_level = os.getenv('DATAMULE_LOG_LEVEL', 'WARNING').upper()
