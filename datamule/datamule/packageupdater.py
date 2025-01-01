@@ -3,10 +3,30 @@ import aiohttp
 import json
 import csv
 import os
+import logging
 from pkg_resources import resource_filename
 from tqdm import tqdm
 from .helper import headers
 from .downloader import PreciseRateLimiter, RateMonitor
+
+# Set up logging based on environment variable
+log_level = os.getenv('DATAMULE_LOG_LEVEL', 'WARNING').upper()
+
+class TqdmLoggingHandler(logging.Handler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.WARNING),
+    format='%(message)s',
+    handlers=[TqdmLoggingHandler()]
+)
+logger = logging.getLogger(__name__)
 
 class PackageUpdater:
     def __init__(self):
@@ -20,23 +40,23 @@ class PackageUpdater:
         """Fetch JSON with rate limiting and monitoring."""
         async with self.limiter:
             try:
-                tqdm.write(f"Fetching {url}")
+                logger.debug(f"Fetching {url}")
                 async with session.get(url, timeout=self.timeout) as response:
                     response.raise_for_status()
-                    tqdm.write(f"Reading content from {url}")
+                    logger.debug(f"Reading content from {url}")
                     content = await response.read()
                     await self.rate_monitor.add_request(len(content))
-                    tqdm.write(f"Parsing JSON from {url}")
+                    logger.debug(f"Parsing JSON from {url}")
                     return await response.json()
             except (asyncio.TimeoutError, aiohttp.ClientError) as e:
                 if retry_count < self.max_retries:
-                    tqdm.write(f"Retry {retry_count + 1} for {url} after error: {str(e)}")
+                    logger.warning(f"Retry {retry_count + 1} for {url} after error: {str(e)}")
                     await asyncio.sleep(1 * (retry_count + 1))  # Exponential backoff
                     return await self._fetch_json(session, url, retry_count + 1)
-                tqdm.write(f"Failed after {self.max_retries} retries for {url}: {str(e)}")
+                logger.error(f"Failed after {self.max_retries} retries for {url}: {str(e)}")
                 return None
             except Exception as e:
-                tqdm.write(f"Error fetching {url}: {str(e)}")
+                logger.error(f"Error fetching {url}: {str(e)}")
                 return None
 
     async def _update_company_tickers(self):
@@ -108,7 +128,7 @@ class PackageUpdater:
             'business_zipCode', 'business_stateOrCountryDescription'
         ]
 
-        tqdm.write(f"\nProcessing batch with CIKs: {[company['cik'] for company in companies]}")
+        logger.info(f"\nProcessing batch with CIKs: {[company['cik'] for company in companies]}")
         tasks = []
         for company in companies:
             cik = company['cik']
@@ -116,33 +136,30 @@ class PackageUpdater:
             tasks.append(self._fetch_json(session, url))
 
         try:
-            tqdm.write("Waiting for batch requests to complete...")
-            # Add timeout for the entire batch
+            logger.debug("Waiting for batch requests to complete...")
             results = await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=True),
                 timeout=120  # 2 minute timeout for entire batch
             )
-            tqdm.write("Batch requests completed")
+            logger.debug("Batch requests completed")
         except asyncio.TimeoutError:
-            tqdm.write("Batch timeout occurred, processing partial results")
-            # Get whatever results we have
+            logger.warning("Batch timeout occurred, processing partial results")
             results = [None] * len(tasks)
         except Exception as e:
-            tqdm.write(f"Error in gather: {str(e)}")
+            logger.error(f"Error in gather: {str(e)}")
             return
 
-        tqdm.write("Processing batch results...")
+        logger.debug("Processing batch results...")
         for company, result in zip(companies, results):
             if isinstance(result, Exception) or not result:
-                tqdm.write(f"Error processing CIK {company['cik']}: {str(result) if isinstance(result, Exception) else 'No data'}")
-                # Write empty row but preserve CIK
+                logger.warning(f"Error processing CIK {company['cik']}: {str(result) if isinstance(result, Exception) else 'No data'}")
                 empty_row = {field: '' for field in metadata_fields}
                 empty_row['cik'] = company['cik']
                 metadata_writer.writerow(empty_row)
                 continue
 
             try:
-                tqdm.write(f"Processing metadata for CIK {company['cik']}")
+                logger.debug(f"Processing metadata for CIK {company['cik']}")
                 metadata = {field: result.get(field, '') for field in metadata_fields if field not in ['tickers', 'exchanges']}
                 metadata['cik'] = company['cik']
                 metadata['tickers'] = ','.join(result.get('tickers', []) or [])
@@ -164,11 +181,10 @@ class PackageUpdater:
                             'from_date': former_name.get('from', ''),
                             'to_date': former_name.get('to', '')
                         })
-                tqdm.write(f"Completed processing CIK {company['cik']}")
+                logger.debug(f"Completed processing CIK {company['cik']}")
 
             except Exception as e:
-                tqdm.write(f"Error processing metadata for CIK {company['cik']}: {str(e)}")
-                # Write empty row but preserve CIK
+                logger.error(f"Error processing metadata for CIK {company['cik']}: {str(e)}")
                 empty_row = {field: '' for field in metadata_fields}
                 empty_row['cik'] = company['cik']
                 metadata_writer.writerow(empty_row)
