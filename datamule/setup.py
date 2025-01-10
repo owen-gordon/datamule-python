@@ -2,9 +2,7 @@ from setuptools import setup, Extension
 from pathlib import Path
 import platform
 import os
-from setuptools import find_namespace_packages  # Add this import
-from Cython.Build import cythonize
-
+from setuptools import find_namespace_packages
 
 # Platform-specific settings
 include_dirs = []
@@ -24,7 +22,7 @@ if platform.system() == "Windows":
     include_dirs = [path for path in sdk_paths if os.path.exists(path)]
     library_dirs = [path for path in lib_paths if os.path.exists(path)]
 
-# Define Cython extension with compiler directives
+# Define extension without cythonize initially
 extensions = [
     Extension(
         "datamule.parser.sgml_parsing.sgml_parser_cy",
@@ -34,14 +32,24 @@ extensions = [
     )
 ]
 
-# Cython compiler directives
-cython_directives = {
-    'language_level': "3",
-    'boundscheck': False,
-    'wraparound': False,
-    'initializedcheck': False,
-    'cdivision': True,
-}
+# Try to import Cython and cythonize the extensions
+try:
+    from Cython.Build import cythonize
+    # Cython compiler directives
+    cython_directives = {
+        'language_level': "3",
+        'boundscheck': False,
+        'wraparound': False,
+        'initializedcheck': False,
+        'cdivision': True,
+    }
+    ext_modules = cythonize(
+        extensions,
+        compiler_directives=cython_directives,
+        annotate=True
+    )
+except ImportError:
+    ext_modules = extensions
 
 extras = {
     "mulebot": ['openai'],
@@ -60,6 +68,7 @@ setup(
     packages=find_namespace_packages(include=['datamule*']),
     url="https://github.com/john-friedman/datamule-python",
     install_requires=[
+        'setuptools>=40.8.0',
         'aiohttp',
         'aiolimiter',
         'tqdm',
@@ -67,19 +76,16 @@ setup(
         'nest_asyncio',
         'aiofiles',
         'polars',
-        'setuptools',
         'selectolax',
         'pytz',
         'zstandard'
     ],
     setup_requires=[
-        'cython',
+        'setuptools>=40.8.0',
+        'cython>=0.29.0',
+        'wheel>=0.33.0',
     ],
-    ext_modules=cythonize(
-        extensions,
-        compiler_directives=cython_directives,
-        annotate=True
-    ),
+    ext_modules=ext_modules,
     extras_require=extras,
     package_data={
         "datamule": ["data/*.csv"],
