@@ -8,3 +8,9 @@ __pycache__
 datamule/datamule/data/
 
 .venv/
+
+# Cython generated files
+*.c
+*.so
+*.html
+*.pyd
