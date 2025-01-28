@@ -7,6 +7,7 @@ import logging
 from pkg_resources import resource_filename
 from tqdm import tqdm
 from .helper import headers
+from pprint import pformat
 from .downloader.downloader import PreciseRateLimiter, RateMonitor
 
 # Set up logging based on environment variable
@@ -35,8 +36,12 @@ class PackageUpdater:
         self.headers = headers
         self.timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
         self.max_retries = 3
+        # Get the directory where this file is located
+        self.package_dir = os.path.dirname(os.path.abspath(__file__))
+        self.data_dir = os.path.join(self.package_dir, 'data')
     
     async def _fetch_json(self, session, url, retry_count=0):
+        logger.debug(f"Fetching {url}")
         """Fetch JSON with rate limiting and monitoring."""
         async with self.limiter:
             try:
@@ -45,9 +50,12 @@ class PackageUpdater:
                     response.raise_for_status()
                     logger.debug(f"Reading content from {url}")
                     content = await response.read()
+                    logger.debug(f"Content length: {len(content)}")
                     await self.rate_monitor.add_request(len(content))
                     logger.debug(f"Parsing JSON from {url}")
-                    return await response.json()
+                    response_json = await response.json()
+                    logger.debug(f"Response content:\n{pformat(response_json)}")
+                    return response_json
             except (asyncio.TimeoutError, aiohttp.ClientError) as e:
                 if retry_count < self.max_retries:
                     logger.warning(f"Retry {retry_count + 1} for {url} after error: {str(e)}")
@@ -63,9 +71,9 @@ class PackageUpdater:
         """Update company tickers data files."""
         url = 'https://www.sec.gov/files/company_tickers.json'
         
-        # Define file paths
-        json_file = resource_filename('datamule', 'data/company_tickers.json')
-        csv_file = resource_filename('datamule', 'data/company_tickers.csv')
+        # Define file paths using the package's data directory
+        json_file = os.path.join(self.data_dir, 'company_tickers.json')
+        csv_file = os.path.join(self.data_dir, 'company_tickers.csv')
         
         # Define temporary file paths
         temp_json_file = json_file + '.temp'
@@ -160,10 +168,11 @@ class PackageUpdater:
 
             try:
                 logger.debug(f"Processing metadata for CIK {company['cik']}")
+                logger.debug(f"Result:\n{pformat(result)}")
                 metadata = {field: result.get(field, '') for field in metadata_fields if field not in ['tickers', 'exchanges']}
                 metadata['cik'] = company['cik']
                 metadata['tickers'] = ','.join(result.get('tickers', []) or [])
-                metadata['exchanges'] = ','.join(result.get('exchanges', []) or [])
+                metadata['exchanges'] = ','.join([x for x in (result.get('exchanges', []) or []) if x is not None])
 
                 # Add address information
                 for address_type in ['mailing', 'business']:
@@ -189,16 +198,16 @@ class PackageUpdater:
                 empty_row['cik'] = company['cik']
                 metadata_writer.writerow(empty_row)
 
-    async def _update_company_metadata(self):
+    async def _update_company_metadata(self, batch_size: int = 10, cik_list: list[str] = None, output_file: str = None):
         """Update company metadata and former names files."""
-        metadata_file = resource_filename('datamule', 'data/company_metadata.csv')
-        former_names_file = resource_filename('datamule', 'data/company_former_names.csv')
+        metadata_file = output_file if output_file else os.path.join(self.data_dir, 'company_metadata.csv')
+        former_names_file = os.path.join(self.data_dir, 'company_former_names.csv')
         
         temp_metadata_file = metadata_file + '.temp'
         temp_former_names_file = former_names_file + '.temp'
 
         # Load current company tickers
-        with open(resource_filename('datamule', 'data/company_tickers.csv'), 'r') as f:
+        with open(os.path.join(self.data_dir, 'company_tickers.csv'), 'r') as f:
             company_tickers = list(csv.DictReader(f))
 
         metadata_fields = ['cik', 'name', 'entityType', 'sic', 'sicDescription', 'ownerOrg',
@@ -223,13 +232,17 @@ class PackageUpdater:
                     former_names_writer = csv.DictWriter(fnf, fieldnames=former_names_fields)
                     former_names_writer.writeheader()
 
+                    if cik_list:
+                        companies = [company for company in company_tickers if str(company['cik']).zfill(10) in cik_list]
+                    else:
+                        companies = company_tickers
+
                     # Process in batches of 10 companies with progress bar
-                    batch_size = 10
-                    total_companies = len(company_tickers)
+                    total_companies = len(companies)
                     progress_bar = tqdm(total=total_companies, desc="Processing CIKs")
                     
                     for i in range(0, total_companies, batch_size):
-                        batch = company_tickers[i:i + batch_size]
+                        batch = companies[i:i + batch_size]
                         await self._process_metadata_batch(
                             session, batch, metadata_writer, former_names_writer
                         )
@@ -263,7 +276,7 @@ class PackageUpdater:
     def update_company_tickers(self):
         """Update company tickers data files."""
         return asyncio.run(self._update_company_tickers())
-
-    def update_company_metadata(self):
+    
+    def update_company_metadata(self, batch_size=10, cik_list=None, output_file=None):
         """Update company metadata and former names files."""
-        return asyncio.run(self._update_company_metadata())
+        return asyncio.run(self._update_company_metadata(batch_size, cik_list, output_file))

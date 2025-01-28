@@ -88,7 +88,7 @@ setup(
     ext_modules=ext_modules,
     extras_require=extras,
     package_data={
-        "datamule": ["data/*.csv"],
+        "datamule": ["data/*.csv", "data/*.json"],
         "datamule.mulebot.mulebot_server": [
             "templates/*.html",
             "static/css/*.css",
