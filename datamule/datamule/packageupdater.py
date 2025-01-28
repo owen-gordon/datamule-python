@@ -136,7 +136,7 @@ class PackageUpdater:
             'business_zipCode', 'business_stateOrCountryDescription'
         ]
 
-        logger.info(f"\nProcessing batch with CIKs: {[company['cik'] for company in companies]}")
+        logger.debug(f"\nProcessing batch with CIKs: {[company['cik'] for company in companies]}")
         tasks = []
         for company in companies:
             cik = company['cik']
