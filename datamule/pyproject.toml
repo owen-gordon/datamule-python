@@ -1,0 +1,84 @@
+[build-system]
+# Specify build requirements, including setuptools and Cython
+requires = ["setuptools>=61.0", "cython>=0.29.0", "wheel"]
+build-backend = "setuptools.build_meta" # Standard build backend for setuptools
+
+[project]
+# Core project metadata
+name = "datamule"
+version = "0.426"
+authors = [
+    { name = "John Friedman" } # email is optional
+]
+description = "Making it easier to use SEC filings."
+# Assuming README.md exists or will be created in the datamule/ directory
+readme = "README.md"
+requires-python = ">=3.8" # Specify minimum Python version
+license = { text = "MIT License" } # Based on LICENSE file found earlier
+classifiers = [
+    "Development Status :: 4 - Beta", # Example classifier
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+# Runtime dependencies
+dependencies = [
+    'aiohttp',
+    'aiolimiter',
+    'tqdm',
+    'requests',
+    'nest_asyncio',
+    'aiofiles',
+    'polars',
+    'selectolax',
+    'pytz',
+    'zstandard'
+]
+
+[project.urls]
+# Project links
+Homepage = "https://github.com/john-friedman/datamule-python"
+Repository = "https://github.com/john-friedman/datamule-python"
+
+[project.optional-dependencies]
+# Optional dependencies for extras
+mulebot = ['openai']
+mulebot_server = ['flask']
+dataset_builder = ['pandas', 'google-generativeai', 'psutil']
+# Recreate the 'all' extra by combining others
+all = ['openai', 'flask', 'pandas', 'google-generativeai', 'psutil']
+
+[tool.setuptools]
+# Instruct setuptools to automatically include package data specified
+# by MANIFEST.in or discovered automatically. Works with git ls-files.
+include-package-data = true
+# Explicitly list packages relative to this pyproject.toml file
+packages = [
+    "datamule",
+    "datamule.data",
+    "datamule.downloader",
+    "datamule.parser",
+    "datamule.parser.document_parsing",
+    "datamule.parser.sgml_parsing",
+    "datamule.mulebot",
+    "datamule.mulebot.mulebot_server",
+    "datamule.dataset_builder",
+]
+
+# Explicit package data mapping (might be redundant with include-package-data=True
+# and a MANIFEST.in, but kept for parity with original setup.py)
+[tool.setuptools.package-data]
+"datamule" = ["data/*.csv", "data/*.json"]
+"datamule.mulebot.mulebot_server" = [
+    "templates/*.html",
+    "static/css/*.css",
+    "static/scripts/*.js"
+] 
