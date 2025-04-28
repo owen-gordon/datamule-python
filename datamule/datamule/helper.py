@@ -2,7 +2,7 @@ import requests
 import os
 from tqdm import tqdm
 import zipfile
-import importlib.resources
+import pathlib
 import csv
 import re
 import io
@@ -62,32 +62,38 @@ def _download_from_dropbox(url, output_path):
 # May generalize to load any package resource
 def load_package_csv(name):
     """Load package CSV files"""
-    try:
-        data_file_traversable = (
-            importlib.resources.files("datamule") / "data" / f"{name}.csv"
-        )
-    except ImportError:
-        raise RuntimeError(
-            "Could not locate package data. Ensure datamule is properly installed."
-        )
-
     company_tickers = []
-
-    # Use read_text and StringIO
     try:
-        csv_text = data_file_traversable.read_text(encoding="utf-8")
+        # Get path relative to the current file (__file__)
+        current_dir = pathlib.Path(__file__).parent
+        csv_path = current_dir / "data" / f"{name}.csv"
+
+        # Use read_text and StringIO
+        csv_text = csv_path.read_text(encoding="utf-8")
         with io.StringIO(csv_text) as csvfile:
             csv_reader = csv.DictReader(csvfile)
             for row in csv_reader:
                 company_tickers.append(row)
     except FileNotFoundError:
+        # Construct the expected path string for the error message
+        try:
+            expected_path = str(pathlib.Path(__file__).parent / "data" / f"{name}.csv")
+        except Exception:
+            expected_path = (
+                f"datamule/data/{name}.csv (dynamic path construction failed)"
+            )
         raise FileNotFoundError(
-            f"Package data file not found at expected location: {data_file_traversable}"
+            f"Package data file not found. Looked relative to helper.py at: {expected_path}"
         )
     except Exception as e:
-        raise RuntimeError(
-            f"Error reading package data file {data_file_traversable}: {e}"
-        )
+        # Construct the expected path string for the error message
+        try:
+            expected_path = str(pathlib.Path(__file__).parent / "data" / f"{name}.csv")
+        except Exception:
+            expected_path = (
+                f"datamule/data/{name}.csv (dynamic path construction failed)"
+            )
+        raise RuntimeError(f"Error reading package data file {expected_path}: {e}")
 
     return company_tickers
 

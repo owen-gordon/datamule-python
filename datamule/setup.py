@@ -1,10 +1,14 @@
 from setuptools import setup, Extension
-from pathlib import Path
 import platform
 import os
-from setuptools import find_namespace_packages
 
-# Platform-specific settings
+# ======================================================
+# This setup.py is kept primarily for Cython extensions.
+# Most package metadata and configuration is now defined
+# in pyproject.toml using modern standards.
+# ======================================================
+
+# Platform-specific settings for Cython build
 include_dirs = []
 library_dirs = []
 
@@ -13,26 +17,30 @@ if platform.system() == "Windows":
     sdk_paths = [
         r"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\ucrt",
         r"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\shared",
-        r"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um",  # Added this for basetsd.h
+        r"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um",
     ]
     lib_paths = [
         r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\um\x64",
         r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\ucrt\x64",
     ]
+    # Filter paths that actually exist
     include_dirs = [path for path in sdk_paths if os.path.exists(path)]
     library_dirs = [path for path in lib_paths if os.path.exists(path)]
 
-# Define extension without cythonize initially
+# Define Cython extension
 extensions = [
     Extension(
+        # Ensure the name matches the structure defined in pyproject.toml packages
         "datamule.parser.sgml_parsing.sgml_parser_cy",
+        # Source file relative to this setup.py
         ["datamule/parser/sgml_parsing/sgml_parser_cy.pyx"],
         include_dirs=include_dirs,
         library_dirs=library_dirs,
     )
 ]
 
-# Try to import Cython and cythonize the extensions
+# Attempt to cythonize the extensions if Cython is available
+# Build dependencies (including Cython) are specified in pyproject.toml
 try:
     from Cython.Build import cythonize
 
@@ -45,65 +53,27 @@ try:
         "cdivision": True,
     }
     ext_modules = cythonize(
-        extensions, compiler_directives=cython_directives, annotate=True
+        extensions,
+        compiler_directives=cython_directives,
+        annotate=False,  # Typically False for production builds
     )
 except ImportError:
-    ext_modules = extensions
+    print(
+        "Cython not found. Building extension from C source if available, or skipping."
+    )
+    # Check if the .c file exists as a fallback
+    c_source_file = "datamule/parser/sgml_parsing/sgml_parser_cy.c"
+    if os.path.exists(c_source_file):
+        print(f"Found C source: {c_source_file}")
+        extensions[0].sources = [c_source_file]  # Switch to .c file
+        ext_modules = extensions
+    else:
+        print("C source not found. Extension will not be built.")
+        ext_modules = (
+            []
+        )  # Don't build the extension if Cython isn't there and no .c file
 
-extras = {
-    "mulebot": ["openai"],
-    "mulebot_server": ["flask"],
-    "dataset_builder": ["pandas", "google-generativeai", "psutil"],
-}
-
-all_dependencies = set(dep for extra_deps in extras.values() for dep in extra_deps)
-extras["all"] = list(all_dependencies)
-
-setup(
-    name="datamule",
-    author="John Friedman",
-    version="0.426",
-    description="Making it easier to use SEC filings.",
-    packages=[
-        "datamule",
-        "datamule.data",
-        "datamule.downloader",
-        "datamule.parser",
-        "datamule.parser.document_parsing",
-        "datamule.parser.sgml_parsing",
-        "datamule.mulebot",
-        "datamule.mulebot.mulebot_server",
-        "datamule.dataset_builder",
-    ],
-    package_dir={"": "."},
-    url="https://github.com/john-friedman/datamule-python",
-    install_requires=[
-        "setuptools>=40.8.0",
-        "aiohttp",
-        "aiolimiter",
-        "tqdm",
-        "requests",
-        "nest_asyncio",
-        "aiofiles",
-        "polars",
-        "selectolax",
-        "pytz",
-        "zstandard",
-    ],
-    setup_requires=[
-        "setuptools>=40.8.0",
-        "cython>=0.29.0",
-        "wheel>=0.33.0",
-    ],
-    ext_modules=ext_modules,
-    extras_require=extras,
-    package_data={
-        "datamule": ["data/*.csv", "data/*.json"],
-        "datamule.mulebot.mulebot_server": [
-            "templates/*.html",
-            "static/css/*.css",
-            "static/scripts/*.js",
-        ],
-    },
-    include_package_data=True,
-)
+# Minimal setup() call, only specifying extensions.
+# All other metadata (name, version, packages, dependencies, etc.)
+# is defined in pyproject.toml.
+setup(ext_modules=ext_modules)
