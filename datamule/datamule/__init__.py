@@ -60,6 +60,7 @@ def _setup_notebook_env():
 # Set up notebook environment
 _setup_notebook_env()
 
+__version__ = "0.1.0"
 __all__ = [
     'Downloader',
     'PremiumDownloader',
